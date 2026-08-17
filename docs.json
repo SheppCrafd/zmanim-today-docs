@@ -3,9 +3,9 @@
   "name": "Zmanim Today",
   "theme": "luma",
   "colors": {
-    "primary": "#1D4ED8",
+    "primary": "#2563EB",
     "light": "#3B82F6",
-    "dark": "#1D4ED8"
+    "dark": "#1E40AF"
   },
   "logo": {
     "light": "/images/Untitleddesign(37).png",
@@ -66,7 +66,7 @@
   "background": {
     "color": {
       "light": "#FFFFFF",
-      "dark": "#0B101D"
+      "dark": "#080D16"
     }
   },
   "navbar": {
@@ -81,7 +81,13 @@
     "default": "light"
   },
   "fonts": {
-    "family": "Inter"
+    "heading": {
+      "family": "Fraunces",
+      "weight": 600
+    },
+    "body": {
+      "family": "Inter"
+    }
   },
   "styling": {
     "eyebrows": "section"
