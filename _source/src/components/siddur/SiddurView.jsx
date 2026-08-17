@@ -1,10 +1,12 @@
-import React, {
+import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useCallback,
 } from "react";
+import DOMPurify from "dompurify";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -15,11 +17,19 @@ import {
   ArrowLeft,
   X,
   Search,
+  Bookmark,
+  BookmarkCheck,
+  Languages,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate, useLocation } from "react-router-dom";
 import { fetchAndZipSefaria } from "@/hooks/useSefaria";
 import { processSefariaSchema } from "@/lib/siddurSchema";
+import { getLiturgicalFlags } from "@/lib/hebrewDate";
+import { getActiveInsertions, matchInsertion } from "@/lib/liturgicalInsertions";
+import { useSavedLocation } from "@/hooks/useLocation";
+import { useSiddurBookmarks } from "@/hooks/useSiddurBookmarks";
+import { createCachedTransliterator } from "hebrew-transliterate";
 import TocTree from "@/components/siddur/TocTree";
 import NavMenu from "@/components/NavMenu";
 import {
@@ -29,21 +39,65 @@ import {
   SiddurError,
 } from "@/components/siddur/SiddurSegment";
 
-/* ---------------- SANITIZER ---------------- */
+/* ---------------- SANITIZER ----------------
+ * Sefaria text can include community-contributed HTML, so this is untrusted
+ * input rendered via dangerouslySetInnerHTML. Delegate to DOMPurify (fuzzed
+ * against real browser parsers, actively maintained) rather than a hand-rolled
+ * parser+stripper — the latter is exactly the pattern that's historically
+ * produced subtle mutation-XSS bypasses. Zero surviving attributes, matching
+ * the plain-text-with-basic-formatting output the reader has always shown.
+ * (Note: don't combine ALLOWED_ATTR with USE_PROFILES here — DOMPurify 3.x
+ * silently drops the ALLOWED_ATTR restriction when both are set together.) */
 function sanitizeHTML(htmlString) {
   if (!htmlString) return "";
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlString, "text/html");
-  doc
-    .querySelectorAll("script, iframe, object, embed, style, link, meta, base")
-    .forEach((el) => el.remove());
-  doc.querySelectorAll("*").forEach((el) => {
-    Array.from(el.attributes).forEach((attr) => el.removeAttribute(attr.name));
+  return DOMPurify.sanitize(htmlString, {
+    ALLOWED_ATTR: [],
   });
-  return doc.body.innerHTML;
 }
 
+// Query data is immutable once fetched (react-query + IndexedDB cache), so the
+// same raw he/en string comes back on every re-render of a given section. The
+// flatItems memo below recomputes for the *entire* activeSections list every
+// time it grows (infinite scroll) or langMode toggles, which without a cache
+// means re-running DOMPurify over every already-seen segment again and again.
+// Caching by the raw string sidesteps that — pure function of its input, so a
+// plain module-level Map (never invalidated) is safe and keeps the sanitized
+// output byte-identical to calling sanitizeHTML directly.
+const sanitizeCache = new Map();
+function sanitizeCached(htmlString) {
+  if (!htmlString) return "";
+  const hit = sanitizeCache.get(htmlString);
+  if (hit !== undefined) return hit;
+  const clean = sanitizeHTML(htmlString);
+  sanitizeCache.set(htmlString, clean);
+  return clean;
+}
+
+// Module-level, so the memoizing cache persists across renders exactly like
+// sanitizeCache above — transliteration is a pure function of its input.
+const transliterateCached = createCachedTransliterator();
+
 const clampScale = (s) => Math.max(0.5, Math.min(3, Math.round(s * 20) / 20));
+
+// Shared by zoom (applyScale) and the lang-mode/transliteration toggles
+// below: finds whichever text row currently sits at the top of the reader
+// viewport, so a layout-changing action can keep that row visually pinned
+// instead of the page appearing to jump. Scans a few fixed y-offsets rather
+// than just the very top edge, since the topmost point can land on padding
+// between rows rather than text itself.
+function findTopAnchor(container, selector) {
+  if (!container) return null;
+  const cRect = container.getBoundingClientRect();
+  const x = cRect.left + cRect.width / 2;
+  for (const y of [cRect.top + 52, cRect.top + 72, cRect.top + 100]) {
+    const hit = document.elementFromPoint(x, y);
+    if (hit) {
+      const el = hit.closest && hit.closest(selector);
+      if (el) return el;
+    }
+  }
+  return null;
+}
 
 /* ---------------- SUBHEADER DETECTION ---------------- */
 // Sefaria injects a section's title (and its parent-category titles) as the
@@ -53,6 +107,16 @@ const clampScale = (s) => Math.max(0.5, Math.min(3, Math.round(s * 20) / 20));
 // of EVERY node in the siddur's TOC tree (English + Hebrew), plus a gloss
 // heuristic for foreign parenthetical subtitles (e.g. Portuguese).
 const stripNikud = (s) => (s || "").replace(/[\u0591-\u05C7\u05F3\u05F4]/g, "");
+// No replacement space (not " ") \u2014 Sefaria sometimes wraps letters *inside*
+// a word in a tag (e.g. "\u05E9\u05B0\u05C1\u05DE\u05B7<big>\u05E2</big>", emphasizing Shema's last letter),
+// and a naive space-replacement would split that single word into two
+// unsearchable pieces ("\u05E9\u05DE \u05E2"). Real inter-word tags already have genuine
+// spaces around them in the source text, so dropping tags outright doesn't
+// merge anything that wasn't already meant to stay apart.
+const stripTags = (s) => (s || "").replace(/<[^>]*>/g, "");
+// Nikud- and tag-stripped, lowercased \u2014 applied to both the search query and
+// candidate segment text so "\u05D9\u05E2\u05DC\u05D4" matches "\u05D9\u05B7\u05E2\u05B2\u05DC\u05B6\u05D4" regardless of vowel points.
+const normalizeForSearch = (s) => stripNikud(stripTags(s || "")).toLowerCase();
 const sig = (s) => {
   let t = stripNikud(s);
   t = t.replace(/<[^>]*>/g, " ");
@@ -104,16 +168,65 @@ async function sweepEmpties(sections, queryClient, concurrency = 8) {
   return empty;
 }
 
+// Fetch-only variant of sweepEmpties, for full-text search: walks the whole
+// book so every section's text ends up in the query cache (same query key,
+// same shape — nothing is double-fetched once cached; fetchAndZipSefaria
+// itself checks IndexedDB before network, so repeat searches across sessions
+// are typically fast). Runs only when the user actually searches — never
+// eagerly on TOC mount.
+async function ensureAllFetched(sections, queryClient, concurrency = 8) {
+  let idx = 0;
+  const run = async () => {
+    while (idx < sections.length) {
+      const i = idx++;
+      const sec = sections[i];
+      try {
+        await queryClient.fetchQuery({
+          queryKey: ["sefaria-text-v3", sec.ref],
+          queryFn: () => fetchAndZipSefaria(sec.ref, sec.altRefs),
+          staleTime: 86400000,
+        });
+      } catch {
+        /* skip — leave unsearchable rather than block the rest */
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, sections.length) }, run),
+  );
+}
+
+// Pure cache read (no fetch) — true if any segment's normalized he/en text
+// for this section contains the (already-normalized) query. Correctness here
+// depends on ensureAllFetched having populated the cache first.
+function sectionMatchesText(sec, queryClient, normalizedQuery) {
+  const data = queryClient.getQueryData(["sefaria-text-v3", sec.ref]);
+  if (!Array.isArray(data)) return false;
+  return data.some(
+    (seg) =>
+      normalizeForSearch(seg.he).includes(normalizedQuery) ||
+      normalizeForSearch(seg.en).includes(normalizedQuery),
+  );
+}
+
 export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { location: savedLocation } = useSavedLocation();
+  const { bookmarks, isBookmarked, toggleBookmark, removeBookmark } =
+    useSiddurBookmarks(bookRef);
 
   const scrollRef = useRef(null);
   const scrollDebounce = useRef(null);
   const pinchRef = useRef({ active: false, startDist: 0, startScale: 1 });
+  const pendingScaleRef = useRef(null);
+  const zoomRafRef = useRef(null);
   const contentRef = useRef(null);
   const labelRef = useRef(null);
+  // Per-section flatItems cache (keyed by ref + lang mode) — see flatItems
+  // below for why this exists.
+  const sectionItemsCacheRef = useRef(new Map());
   const scaleRef = useRef(
     (typeof localStorage !== "undefined" &&
       parseFloat(localStorage.getItem("siddur-font-scale"))) ||
@@ -123,7 +236,6 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
 
   const [tree, setTree] = useState([]);
   const [sections, setSections] = useState([]);
-  const [refToIndex, setRefToIndex] = useState({});
 
   // Render count for infinite downward scroll (always starts at 0)
   const [renderCount, setRenderCount] = useState(10);
@@ -160,6 +272,73 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
 
   // Search State
   const [searchQuery, setSearchQuery] = useState("");
+  const [deferredSearchQuery, setDeferredSearchQuery] = useState("");
+  const [textSearchReady, setTextSearchReady] = useState(false);
+  const [textSearchLoading, setTextSearchLoading] = useState(false);
+  const searchDebounce = useRef(null);
+
+  // Debounce so fast typing doesn't trigger the full-text ensure-fetch on
+  // every keystroke — only the settled query kicks off ensureAllFetched below.
+  useEffect(() => {
+    clearTimeout(searchDebounce.current);
+    searchDebounce.current = setTimeout(() => {
+      setDeferredSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(searchDebounce.current);
+  }, [searchQuery]);
+
+  // Full-text search only fetches when the user actually searches — never
+  // eagerly on TOC mount. Once every section's text is in the query cache,
+  // filteredTree below can trust sectionMatchesText's cache reads.
+  useEffect(() => {
+    if (!deferredSearchQuery.trim() || !sections.length) {
+      setTextSearchReady(false);
+      return;
+    }
+    let cancelled = false;
+    setTextSearchReady(false);
+    setTextSearchLoading(true);
+    ensureAllFetched(sections, queryClient).then(() => {
+      if (cancelled) return;
+      setTextSearchReady(true);
+      setTextSearchLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredSearchQuery, sections, queryClient]);
+
+  // Bookmarks-only filter for the TOC page
+  const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
+  // Transliteration toggle — independent of langMode, renders as its own column
+  const [showTranslit, setShowTranslit] = useState(false);
+
+  // Today's conditional-insertion flags (Rosh Chodesh, festivals, fasts...) —
+  // loaded once so the reader can highlight segments containing insertions
+  // that apply today (e.g. Ya'aleh V'yavo, Al Hanisim, Tal U'matar).
+  const [liturgicalFlags, setLiturgicalFlags] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getLiturgicalFlags(new Date(), savedLocation?.country === "Israel")
+      .then((flags) => {
+        if (!cancelled) setLiturgicalFlags(flags);
+      })
+      .catch(() => {
+        /* leave null — reader just shows no highlights */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedLocation?.country]);
+
+  const activeInsertions = useMemo(
+    () => getActiveInsertions(liturgicalFlags),
+    [liturgicalFlags],
+  );
+  const activeInsertionsKey = useMemo(
+    () => activeInsertions.map((i) => i.id).join(","),
+    [activeInsertions],
+  );
 
   const showEN = langMode !== "he";
   const showHB = langMode !== "en";
@@ -176,21 +355,7 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     const content = contentRef.current;
 
     // Find the text row currently at the top of the reader viewport.
-    let anchorEl = null;
-    if (container && content) {
-      const cRect = container.getBoundingClientRect();
-      const x = cRect.left + cRect.width / 2;
-      for (const y of [cRect.top + 52, cRect.top + 72, cRect.top + 100]) {
-        const hit = document.elementFromPoint(x, y);
-        if (hit) {
-          const seg = hit.closest && hit.closest('[id^="seg-"]');
-          if (seg) {
-            anchorEl = seg;
-            break;
-          }
-        }
-      }
-    }
+    const anchorEl = content ? findTopAnchor(container, '[id^="seg-"]') : null;
     const beforeTop = anchorEl ? anchorEl.getBoundingClientRect().top : null;
 
     scaleRef.current = s;
@@ -213,8 +378,75 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     }, 350);
   }, []);
 
+  // Same anchored-scroll idea as applyScale above, adapted for React state
+  // changes (langMode, showTranslit) instead of a direct DOM mutation.
+  // Toggling language columns or the transliteration column changes every
+  // segment's height, which would otherwise make the page appear to jump.
+  // Since a state update commits asynchronously, capture the anchor's id +
+  // position *before* the triggering setState call, then restore scroll
+  // position in a layout effect that fires after React has committed the
+  // new DOM — synchronously before paint, same as applyScale's own
+  // measure-after-mutate timing, just deferred to React's commit phase.
+  const scrollAnchorRef = useRef(null);
+  const captureScrollAnchor = useCallback(() => {
+    if (page !== "reader") return;
+    const container = scrollRef.current;
+    // Headers survive every langMode/transliteration toggle (segments don't
+    // always — a segment with no content in the newly-selected mode drops
+    // out of the list entirely), so prefer anchoring to whichever is
+    // topmost rather than segments only.
+    const el = findTopAnchor(container, '[id^="seg-"], [id^="hdr-"]');
+    scrollAnchorRef.current = el
+      ? { id: el.id, beforeTop: el.getBoundingClientRect().top }
+      : null;
+  }, [page]);
+
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    if (!anchor) return;
+    scrollAnchorRef.current = null;
+    const container = scrollRef.current;
+    const el = document.getElementById(anchor.id);
+    if (el && container) {
+      const afterTop = el.getBoundingClientRect().top;
+      container.scrollTop += afterTop - anchor.beforeTop;
+    }
+  }, [langMode, showTranslit]);
+
   // Pinch-to-zoom (touch) + trackpad pinch (ctrl+wheel) drive text size.
   // Updates go straight to the DOM via applyScale — zero React re-renders.
+  //
+  // applyScale itself does several layout-forcing reads (elementFromPoint to
+  // find the anchor row, getBoundingClientRect before/after the font-size
+  // write) so it can keep that row visually pinned while the text resizes.
+  // touchmove and ctrl+wheel can both fire many times faster than the
+  // display can actually paint, and calling applyScale directly from the raw
+  // event handler ran that whole read-write-read-write sequence once per
+  // *event* rather than once per *frame* — during a fast pinch or trackpad
+  // gesture that's several rounds of forced layout crammed into a single
+  // 16ms frame budget, which is exactly what shows up as zoom feeling
+  // stuttery instead of buttery. scheduleScale coalesces any number of
+  // same-frame requests into a single applyScale call using only the latest
+  // value, since intermediate values within one frame were never painted
+  // anyway.
+  const scheduleScale = useCallback(
+    (next) => {
+      pendingScaleRef.current = next;
+      if (zoomRafRef.current != null) return;
+      zoomRafRef.current = requestAnimationFrame(() => {
+        zoomRafRef.current = null;
+        const value = pendingScaleRef.current;
+        // Reset before applying — once consumed, the next event outside this
+        // frame's batch should compute its delta from applyScale's fresh,
+        // authoritative scaleRef.current, not a stale leftover pending value
+        // (which may predate clamping, e.g. past the 0.5–3 range).
+        pendingScaleRef.current = null;
+        applyScale(value);
+      });
+    },
+    [applyScale],
+  );
+
   useEffect(() => {
     if (page !== "reader") return;
     const el = scrollRef.current;
@@ -238,7 +470,7 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
       e.preventDefault();
       const ratio =
         dist(e.touches[0], e.touches[1]) / (pinchRef.current.startDist || 1);
-      applyScale(pinchRef.current.startScale * ratio);
+      scheduleScale(pinchRef.current.startScale * ratio);
     };
 
     const endPinch = (e) => {
@@ -248,7 +480,15 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     const onWheel = (e) => {
       if (!e.ctrlKey) return; // trackpad pinch fires ctrl+wheel
       e.preventDefault();
-      applyScale(scaleRef.current - e.deltaY * 0.003);
+      // Base off any not-yet-applied pending value so several wheel ticks
+      // landing in the same animation frame accumulate correctly, instead of
+      // each one computing its delta from the same stale scaleRef.current
+      // and only the last tick in the frame actually counting.
+      const base =
+        pendingScaleRef.current != null
+          ? pendingScaleRef.current
+          : scaleRef.current;
+      scheduleScale(base - e.deltaY * 0.003);
     };
 
     el.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -263,8 +503,12 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
       el.removeEventListener("touchend", endPinch);
       el.removeEventListener("touchcancel", endPinch);
       el.removeEventListener("wheel", onWheel);
+      if (zoomRafRef.current != null) {
+        cancelAnimationFrame(zoomRafRef.current);
+        zoomRafRef.current = null;
+      }
     };
-  }, [page, applyScale]);
+  }, [page, scheduleScale]);
 
   // Persist the known-empty refs so next load prunes instantly
   useEffect(() => {
@@ -284,12 +528,9 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     fetch(`https://www.sefaria.org/api/index/${bookRef}`)
       .then((r) => r.json())
       .then((data) => {
-        const { tree, flat, refToIndex } = processSefariaSchema(
-          data?.schema || {},
-        );
+        const { tree, flat } = processSefariaSchema(data?.schema || {});
         setTree(tree);
         setSections(flat);
-        setRefToIndex(refToIndex);
         setLoading(false);
       })
       .catch(() => {
@@ -353,12 +594,17 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
 
     const query = searchQuery.toLowerCase();
 
+    const normalizedQuery = normalizeForSearch(searchQuery);
+
     const filterNodes = (nodes) => {
       return nodes
         .map((node) => {
           const matches =
             node.title?.toLowerCase().includes(query) ||
-            node.heTitle?.includes(query);
+            node.heTitle?.includes(query) ||
+            (textSearchReady &&
+              node.children.length === 0 &&
+              sectionMatchesText(node, queryClient, normalizedQuery));
 
           const filteredChildren = filterNodes(node.children || []);
 
@@ -371,7 +617,7 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     };
 
     return filterNodes(visibleTree);
-  }, [visibleTree, searchQuery]);
+  }, [visibleTree, searchQuery, textSearchReady, queryClient]);
 
   // Jump trigger
   const jumpTo = useCallback((i) => {
@@ -414,8 +660,15 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
     };
   }, [sections, queryClient, pruning]);
 
-  // Sliced queries starting from 0
-  const activeSections = visibleSections.slice(0, renderCount + 1);
+  // Sliced queries starting from 0. Memoized so unrelated re-renders (e.g. a
+  // search-box keystroke while on the TOC page) don't produce a new array
+  // identity, which would otherwise force flatItems/itemsBySection below to
+  // recompute (and re-walk every loaded segment) even though nothing about
+  // the reader's visible content actually changed.
+  const activeSections = useMemo(
+    () => visibleSections.slice(0, renderCount + 1),
+    [visibleSections, renderCount],
+  );
 
   const sectionQueries = useQueries({
     queries: activeSections.map((sec) => ({
@@ -431,31 +684,52 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
   }, [sectionQueries]);
 
   // DOM Items
+  //
+  // Previously this walked *every* active section from scratch on every call
+  // — including all of infinite scroll's growing history — even though only
+  // the newly-added tail sections are actually new. Late in a long reading
+  // session (renderCount deep into a big siddur), each +5 growth tick was
+  // re-running the per-segment subheader/hasH/hasE logic over every section
+  // already read, not just the new ones — steadily more expensive right at
+  // the moment new content streams in, which is exactly when a scroll hitch
+  // is most visible. A finished section's item list is a pure function of
+  // (its ref, showHB, showEN) and query data never mutates in place once
+  // loaded, so it's cached per-section and only the newly-active sections
+  // (or sections whose loading/error state just resolved) do real work.
   const flatItems = useMemo(() => {
+    const cache = sectionItemsCacheRef.current;
     const items = [];
     activeSections.forEach((sec, i) => {
       const query = sectionQueries[i];
-
-      items.push({
+      const header = {
         type: "header",
         id: `hdr-${i}`,
         label: sec.label,
         heLabel: sec.heLabel,
         sectionIndex: i,
-      });
+      };
 
       if (!query || query.isLoading) {
+        items.push(header);
         items.push({ type: "loading", id: `load-${sec.ref}`, sectionIndex: i });
         return;
       }
       if (query.isError) {
+        items.push(header);
         items.push({ type: "error", id: `err-${sec.ref}`, sectionIndex: i });
         return;
       }
-      if (query.data) {
-        // Empty section: Sefaria has no text for this ref — render nothing (header only)
-        if (query.data.length === 0) return;
 
+      const cacheKey = `${sec.ref}::${showHB ? 1 : 0}::${showEN ? 1 : 0}::${showTranslit ? 1 : 0}::${activeInsertionsKey}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        items.push(header, ...cached);
+        return;
+      }
+
+      const sectionBody = [];
+      // Empty section: Sefaria has no text for this ref — render nothing (header only)
+      if (query.data && query.data.length > 0) {
         query.data.forEach((seg, segIndex) => {
           const heText = seg.he || "";
           const enText = seg.en || "";
@@ -472,20 +746,41 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
           if ((hasH || hasE) && heIsTitle && enIsTitle) return;
 
           if (!(showHB && hasH) && !(showEN && hasE)) return;
-          items.push({
+          const insertion = matchInsertion(heText, activeInsertions);
+          sectionBody.push({
             type: "segment",
             id: `seg-${i}-${segIndex}`,
-            sanitizedHe: sanitizeHTML(seg.he),
-            sanitizedEn: sanitizeHTML(seg.en),
+            sanitizedHe: sanitizeCached(seg.he),
+            sanitizedEn: sanitizeCached(seg.en),
+            // Skip segments with no nikud at all (e.g. bare-consonant title
+            // lines, short instructional labels like "בחורף:") rather than
+            // rendering a vowel-less garble — better to omit the column for
+            // that one row than show broken-looking output.
+            sanitizedHeTranslit:
+              showTranslit && hasH && stripNikud(heText) !== heText
+                ? transliterateCached(seg.he)
+                : null,
             hasH,
             hasE,
             sectionIndex: i,
+            specialLabel: insertion?.label || null,
           });
         });
       }
+      cache.set(cacheKey, sectionBody);
+      items.push(header, ...sectionBody);
     });
     return items;
-  }, [activeSections, sectionQueries, showEN, showHB]);
+  }, [
+    activeSections,
+    sectionQueries,
+    showEN,
+    showHB,
+    showTranslit,
+    titleSets,
+    activeInsertions,
+    activeInsertionsKey,
+  ]);
 
   // Group flat items by section index once — avoids an O(n²) filter per render
   const itemsBySection = useMemo(() => {
@@ -555,11 +850,14 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
       if (jumpTargetSection !== null) return;
 
       // 2. Native URL Sync (Checks which header is currently at the top of the screen)
+      // Scoped to just section headers (id^="hdr-") — data-section-index also
+      // appears on every segment/loading/error item below, so querying that
+      // attribute directly meant scanning (and getBoundingClientRect()-ing)
+      // every rendered segment in a long reading session, not just the
+      // handful of section headers this check actually needs.
       clearTimeout(scrollDebounce.current);
       scrollDebounce.current = setTimeout(() => {
-        const headerElements = document.querySelectorAll(
-          "[data-section-index]",
-        );
+        const headerElements = document.querySelectorAll('[id^="hdr-"]');
         let activeIndex = null;
 
         for (let i = 0; i < headerElements.length; i++) {
@@ -601,6 +899,14 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-full pl-9 pr-4 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-slate-200"
         />
+        {textSearchLoading && (
+          <div
+            className="absolute inset-y-0 right-9 flex items-center"
+            title="Searching full text..."
+          >
+            <Loader2 className="h-4 w-4 text-slate-400 animate-spin" />
+          </div>
+        )}
         {searchQuery && (
           <button
             onClick={() => setSearchQuery("")}
@@ -621,7 +927,7 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
           <div className="flex items-center gap-3">
             <NavMenu />
             <div>
-              <h1 className="text-lg font-bold">{title}</h1>
+              <h1 className="font-display text-lg font-semibold">{title}</h1>
               <p className="text-xs text-slate-500">{subtitle}</p>
             </div>
           </div>
@@ -638,23 +944,43 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
           <Button
             size="sm"
             variant={langMode === "en" ? "default" : "outline"}
-            onClick={() => setLangMode("en")}
+            onClick={() => {
+              captureScrollAnchor();
+              setLangMode("en");
+            }}
           >
             EN
           </Button>
           <Button
             size="sm"
             variant={langMode === "he" ? "default" : "outline"}
-            onClick={() => setLangMode("he")}
+            onClick={() => {
+              captureScrollAnchor();
+              setLangMode("he");
+            }}
           >
             HB
           </Button>
           <Button
             size="sm"
             variant={langMode === "both" ? "default" : "outline"}
-            onClick={() => setLangMode("both")}
+            onClick={() => {
+              captureScrollAnchor();
+              setLangMode("both");
+            }}
           >
             BOTH
+          </Button>
+          <Button
+            size="sm"
+            variant={showTranslit ? "default" : "outline"}
+            onClick={() => {
+              captureScrollAnchor();
+              setShowTranslit((v) => !v);
+            }}
+            title="Transliteration"
+          >
+            <Languages className="w-4 h-4 mr-1" /> TR
           </Button>
 
           {page === "reader" && (
@@ -705,6 +1031,20 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
         {page === "toc" && (
           <div className="h-full flex flex-col overflow-hidden">
             {renderSearchBar()}
+            <div className="shrink-0 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 py-2">
+              <Button
+                size="sm"
+                variant={showBookmarksOnly ? "default" : "outline"}
+                onClick={() => setShowBookmarksOnly((v) => !v)}
+              >
+                {showBookmarksOnly ? (
+                  <BookmarkCheck className="w-4 h-4 mr-1" />
+                ) : (
+                  <Bookmark className="w-4 h-4 mr-1" />
+                )}
+                Bookmarks{bookmarks.length ? ` (${bookmarks.length})` : ""}
+              </Button>
+            </div>
             <div className="flex-1 overflow-y-auto px-4 pb-4 overscroll-y-contain">
               {(loading || pruning) && (
                 <div className="py-10 flex justify-center">
@@ -716,7 +1056,53 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
                   <AlertCircle className="w-8 h-8" />
                 </div>
               )}
-              {!loading && !error && !pruning && (
+              {!loading && !error && !pruning && showBookmarksOnly && (
+                <div className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">
+                  {bookmarks.length === 0 && (
+                    <p className="text-sm text-slate-500 py-6 text-center">
+                      No bookmarks yet — tap the bookmark icon while reading
+                      to save a section.
+                    </p>
+                  )}
+                  {[...bookmarks]
+                    .sort(
+                      (a, b) =>
+                        (visibleRefToIndex[a.ref] ?? Infinity) -
+                        (visibleRefToIndex[b.ref] ?? Infinity),
+                    )
+                    .map((b) => {
+                      const idx = visibleRefToIndex[b.ref];
+                      const available = idx !== undefined;
+                      return (
+                        <div
+                          key={b.ref}
+                          className="flex items-center justify-between py-2.5"
+                        >
+                          <button
+                            onClick={() => available && jumpTo(idx)}
+                            disabled={!available}
+                            className={`flex-1 text-left text-sm ${
+                              available
+                                ? "text-slate-700 dark:text-slate-300 hover:underline"
+                                : "text-slate-400 dark:text-slate-600 cursor-not-allowed"
+                            }`}
+                          >
+                            {b.label}
+                            {!available && " (unavailable)"}
+                          </button>
+                          <button
+                            onClick={() => removeBookmark(b.ref)}
+                            className="p-1 text-slate-400 hover:text-slate-600"
+                            aria-label="Remove bookmark"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+              {!loading && !error && !pruning && !showBookmarksOnly && (
                 <TocTree
                   nodes={filteredTree}
                   onSelect={jumpTo}
@@ -775,6 +1161,15 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
                           <SiddurHeader
                             label={headerItem.label}
                             heLabel={headerItem.heLabel}
+                            sectionRef={sec.ref}
+                            bookmarked={isBookmarked(sec.ref)}
+                            onToggleBookmark={() =>
+                              toggleBookmark({
+                                ref: sec.ref,
+                                label: sec.label,
+                                heLabel: sec.heLabel,
+                              })
+                            }
                           />
                         </div>
                       )}
@@ -785,19 +1180,18 @@ export default function SiddurView({ title, subtitle, bookRef, sefariaUrl }) {
                         }}
                       >
                         {bodyItems.map((item) => (
-                          <div
-                            key={item.id}
-                            id={item.id}
-                            data-section-index={item.sectionIndex}
-                          >
+                          <div key={item.id} id={item.id}>
                             {item.type === "segment" && (
                               <SiddurSegment
                                 sanitizedHe={item.sanitizedHe}
                                 sanitizedEn={item.sanitizedEn}
+                                sanitizedHeTranslit={item.sanitizedHeTranslit}
                                 hasH={item.hasH}
                                 hasE={item.hasE}
                                 showHB={showHB}
                                 showEN={showEN}
+                                showTranslit={showTranslit}
+                                specialLabel={item.specialLabel}
                               />
                             )}
                             {item.type === "loading" && <SiddurLoading />}

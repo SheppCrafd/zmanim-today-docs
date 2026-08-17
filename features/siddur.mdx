@@ -26,7 +26,7 @@ Three prayer rites are available, each reflecting a distinct Jewish tradition:
   </Card>
 </CardGroup>
 
-Tap any siddur card from the navigation menu to open it. Your font size preference is saved automatically and restored the next time you open any siddur. You can also bookmark any specific prayer using the deep-link URL (see [Deep Linking](#deep-linking) below).
+Tap any siddur card from the navigation menu to open it. Your font size preference is saved automatically and restored the next time you open any siddur. You can also bookmark any specific prayer for one-tap return visits (see [Bookmarks](#bookmarks) below), or share a deep-link URL (see [Deep Linking](#deep-linking) below).
 
 ---
 
@@ -36,9 +36,30 @@ When you open a siddur you land on the **Table of Contents (TOC)** view. The TOC
 
 - **Top-level categories** are shown as sticky section headers (e.g., _Shacharit_, _Mincha_, _Maariv_, _Shabbat_, _Holidays_).
 - **Sub-categories and individual prayers** are nested beneath their parent with collapsible chevron toggles, allowing you to drill down to any specific prayer.
-- **Search bar** — a persistent search field sits at the top of the TOC. As you type, the tree filters recursively, expanding any branch that contains a matching node (by English title or Hebrew title). Clear the search to restore the full tree.
+- **TOC search** — a persistent search field sits at the top of the TOC. As you type, the tree filters recursively, expanding any branch that contains a matching node (by English title or Hebrew title). Clear the search to restore the full tree. This is a title search over the table of contents itself — for searching inside the prayer text, see [Full-Text Search](#full-text-search) below.
+- **Bookmarks filter** — toggle the bookmark icon in the TOC toolbar to show only the prayers you've bookmarked in this siddur.
 
 Tap any leaf entry in the TOC to jump directly to that prayer in the reader.
+
+---
+
+## Bookmarks
+
+Tap the bookmark icon next to any prayer's heading — in the TOC or in the reader — to save it for quick return. Bookmarks are:
+
+- **Per-siddur** — each of the three siddurim keeps its own independent bookmark list.
+- **Stored locally** on your device, so they persist across sessions without requiring an account.
+- **Filterable** — toggle "bookmarks only" in the TOC to see just your saved prayers, useful for jumping straight to prayers you check daily.
+
+---
+
+## Full-Text Search
+
+Beyond the TOC's title search, the reader supports searching the actual prayer text — Hebrew or English — across the whole siddur:
+
+- Type a word or phrase (e.g., a distinctive line from a prayer you remember but can't name) and matching sections are surfaced, even ones not already loaded into view.
+- Search fetches on demand rather than relying only on whatever's already been loaded by scrolling, so results reflect the complete siddur, not just what you've read so far.
+- Matching is nikud- and diacritic-insensitive, so Hebrew searches work regardless of vowel points in either the query or the text.
 
 ---
 
@@ -58,12 +79,19 @@ Tapping a TOC entry opens the **Reader**, which renders the full text of the sid
 | **EN** | English only | Displays the English translation; Hebrew is hidden |
 | **BOTH** | Bilingual | Hebrew and English displayed side by side on each row |
 
+**Transliteration** Toggle a third column showing the Hebrew text transliterated into Latin characters (Sephardi/Modern Hebrew convention), so you can follow along phonetically even if you can't read Hebrew script. On desktop, transliteration appears as its own column alongside Hebrew and English; on mobile, it stacks directly under the Hebrew line to save horizontal space. The transliteration engine is open source — see [hebrew-transliterate](https://github.com/SheppCrafd/hebrew-transliterate) on GitHub and npm.
+
+**Collapsible footnotes** Where the underlying text includes footnotes, they appear as a small numbered badge next to the relevant word. Tap the badge to expand the footnote inline; tap again to collapse it. Footnotes stay collapsed by default so they don't clutter the reading flow.
+
+**"Say today" highlighting** Seasonal and calendar-dependent insertions — such as Ya'aleh V'yavo on Rosh Chodesh and festivals, Al Hanisim on Chanukah and Purim, or Tal U'matar/Mashiv Haruach during their respective seasons — are highlighted in blue wherever they appear in the text, based on today's date and (for Tal U'matar) whether you're in Israel or the Diaspora. This tells you at a glance whether a seasonal insertion applies today, without needing to remember the calendar rules yourself.
+
 **Font size**
 
 - **Touch screens** — pinch two fingers apart to zoom in, or pinch together to zoom out. The anchor row stays fixed so you don't lose your place.
 - **Desktop / trackpad** — hold `Ctrl` (or `⌘` on macOS) and scroll up/down to resize.
 - **Buttons** — use the `+` and `−` zoom buttons in the reader toolbar for precise control.
 - Font size is persisted in `localStorage` and restored the next time you open the siddur.
+- Your scroll position is preserved when you toggle language mode or transliteration, so switching views doesn't lose your place.
 
 ---
 
@@ -86,7 +114,7 @@ Opening a deep link navigates straight to the correct section — the app loads 
 ---
 
 <Tip>
-  Use the **search bar in the TOC** to jump instantly to the service you need. Type "shacharit", "mincha", "maariv", "kiddush", "hallel", or any Hebrew term to filter the tree and find the right section in seconds — no scrolling required.
+  Use the **search bar in the TOC** to jump instantly to the service you need by name. Type "shacharit", "mincha", "maariv", "kiddush", "hallel", or any Hebrew term to filter the tree and find the right section in seconds — no scrolling required. If you're looking for a specific line inside a prayer rather than the prayer's title, use [Full-Text Search](#full-text-search) in the reader instead.
 </Tip>
 
 <Note>

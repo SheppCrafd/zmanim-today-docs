@@ -91,6 +91,7 @@ Every persistent value the app writes to the browser is listed below.
 | `theme` | `localStorage` | `ThemeContext` |
 | `siddur-font-scale` | `localStorage` | `SiddurView` |
 | `siddur-empty-refs:<bookRef>` | `localStorage` | `SiddurView` |
+| `siddur-bookmarks:<bookRef>` | `localStorage` | `useSiddurBookmarks` |
 | `zmanim_push_sub_id` | `localStorage` | `usePushReminders` |
 | `sefaria-text-cache` (`texts` store) | IndexedDB | `lib/sefariaCache.js` |
 | `["sefaria-text-v3", ref]` (query key) | React Query cache | `SiddurView` |
@@ -282,6 +283,24 @@ useQueries({
 
 On cold start `sweepEmpties(sections, queryClient, 8)` fetches all refs at concurrency 8 and stores the set of empty refs at `siddur-empty-refs:<bookRef>`. Warm loads prune the tree synchronously from that cache, so empty sections never flash into view.
 
+### Bookmarks
+
+`hooks/useSiddurBookmarks.js` persists a per-`bookRef` set of bookmarked section refs to `localStorage`, exposing `bookmarks`, `isBookmarked`, `toggleBookmark`, and `removeBookmark`. Each siddur therefore keeps an independent bookmark list. The TOC's "bookmarks only" toggle (`showBookmarksOnly`) filters the rendered tree down to bookmarked leaves; `SiddurSegment` renders the `Bookmark`/`BookmarkCheck` icon next to each heading and calls `onToggleBookmark`.
+
+### Full-text search
+
+Full-text search is intentionally decoupled from the TOC's title-only tree filter. `sweepEmptiesForSearch` (a fetch-only variant of the cold-start sweep) walks every section on demand — the search input is debounced, and results are backed by TanStack Query's cache so repeat searches are fast without a second network round-trip. Matching runs through `normalizeForSearch`, which strips nikud and HTML tags and lowercases both the query and the candidate text before comparing, so vowel points never cause a false negative.
+
+### Transliteration
+
+`SiddurView` imports `createCachedTransliterator` from the [`hebrew-transliterate`](https://www.npmjs.com/package/hebrew-transliterate) npm package (a standalone open-source package, [`SheppCrafd/hebrew-transliterate`](https://github.com/SheppCrafd/hebrew-transliterate), extracted from this app) and memoizes it once per `SiddurView` instance as `transliterateCached`. Toggling transliteration renders a third value per segment, independent of `langMode` — it can be shown alongside any of HB/EN/BOTH. On narrow viewports the transliteration row stacks under the Hebrew line via CSS rather than occupying a fourth grid column.
+
+### Footnotes and liturgical highlighting
+
+Sefaria sometimes marks a footnote as a `<sup>` immediately followed by an `<i>` note in the raw HTML. `SiddurSegment` detects that pattern and renders the note collapsed behind a numbered badge — clicking it toggles an inline expand/collapse via DOM event delegation, since the footnote markup is sanitized HTML living outside React's own tree.
+
+Separately, `lib/hebrewDate.js`'s `getLiturgicalFlags(date, isIsrael)` derives which seasonal insertions apply today (Rosh Chodesh, festivals, fast days, and the Tal U'matar/Mashiv Haruach season boundary, which differs between Israel and the Diaspora) from the same Hebcal converter call `SiddurView` already makes. `lib/liturgicalInsertions.js` holds the phrase list (Ya'aleh V'yavo, Al Hanisim ×2, Tal U'matar, Mashiv Haruach, Morid Hatal, Aneinu, Avinu Malkeinu, Hallel) and `matchInsertion` checks each rendered segment's actual text against the active flags, highlighting matches in blue.
+
 ### Zoom, scroll, deep links
 
 - Font scale is driven through refs \+ direct DOM writes (`content.style.fontSize`) — no React re-renders.
@@ -289,6 +308,7 @@ On cold start `sweepEmpties(sections, queryClient, 8)` fetches all refs at concu
   - Buttons `−` / `+` step by `0.05`, clamped between `0.5` and `3`.
   - Persisted to `localStorage['siddur-font-scale']` (debounced 350 ms).
 - Native browser scroll drives an infinite loader: `renderCount` grows by 5 whenever `scrollTop + clientHeight > scrollHeight - 1500`.
+- Toggling language mode or transliteration re-anchors scroll to the topmost visible row (the same technique zoom's `applyScale` already used), so switching views doesn't jump the reader to an unrelated position.
 - `data-section-index` on each header lets the scroll handler `replaceState` the URL:
 
 ```txt

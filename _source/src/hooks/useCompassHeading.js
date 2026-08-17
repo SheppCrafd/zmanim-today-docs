@@ -1,33 +1,55 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export function useCompassHeading() {
   const [heading, setHeading] = useState(0);
   const [supported, setSupported] = useState(true);
   const smoothRef = useRef(0);
-  const frameRef = useRef(null);
   const targetRef = useRef(0);
-
-  const handleOrientation = useCallback((e) => {
-    let h =
-      e.webkitCompassHeading != null
-        ? e.webkitCompassHeading
-        : e.alpha != null
-          ? (360 - e.alpha) % 360
-          : null;
-    if (h != null) targetRef.current = h;
-  }, []);
+  const frameRef = useRef(null);
+  const runningRef = useRef(false);
 
   useEffect(() => {
-    // Smooth interpolation loop
+    // The smoothing loop only runs while there's a real angle left to
+    // converge toward, and stops the instant it settles — it's restarted by
+    // the next real sensor event. Previously this scheduled
+    // requestAnimationFrame unconditionally forever from the moment the
+    // compass mounted, which on any device with no magnetometer (most
+    // desktop browsers, some Android configs) meant a permanent 60fps loop
+    // computing nothing for as long as Home's compass widget (on by
+    // default) or the Compass page stayed open.
     const animate = () => {
       let diff = targetRef.current - smoothRef.current;
       if (diff > 180) diff -= 360;
       if (diff < -180) diff += 360;
       smoothRef.current = smoothRef.current + diff * 0.1;
-      setHeading(smoothRef.current);
-      frameRef.current = requestAnimationFrame(animate);
+      setHeading((prev) =>
+        Math.abs(smoothRef.current - prev) < 0.05 ? prev : smoothRef.current,
+      );
+      if (Math.abs(diff) > 0.05) {
+        frameRef.current = requestAnimationFrame(animate);
+      } else {
+        runningRef.current = false;
+      }
     };
-    frameRef.current = requestAnimationFrame(animate);
+
+    const kickAnimation = () => {
+      if (!runningRef.current) {
+        runningRef.current = true;
+        frameRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    const handleOrientation = (e) => {
+      let h =
+        e.webkitCompassHeading != null
+          ? e.webkitCompassHeading
+          : e.alpha != null
+            ? (360 - e.alpha) % 360
+            : null;
+      if (h == null) return;
+      targetRef.current = h;
+      kickAnimation();
+    };
 
     const setup = async () => {
       if (typeof DeviceOrientationEvent === "undefined") {
@@ -64,7 +86,7 @@ export function useCompassHeading() {
       );
       window.removeEventListener("deviceorientation", handleOrientation, true);
     };
-  }, [handleOrientation]);
+  }, []);
 
   return { heading, supported };
 }

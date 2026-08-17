@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   MapPin,
   Loader2,
@@ -17,7 +17,7 @@ import { useDashboardPrefs } from "@/hooks/useDashboardPrefs";
 import MiniCompass from "@/components/home/MiniCompass";
 import NextZmanCard from "@/components/home/NextZmanCard";
 import ZmanimSummary from "@/components/home/ZmanimSummary";
-import NavMenu from "@/components/NavMenu";
+import PageHeader, { iconButtonClass } from "@/components/PageHeader";
 import { printZmanim } from "@/lib/printZmanim";
 import ZmanimRemindersPanel from "@/components/zmanim/ZmanimRemindersPanel";
 import { formatTime } from "@/lib/timeUtils";
@@ -35,21 +35,28 @@ function LocationLabel({ location }) {
   );
 }
 
-const today = new Date();
-const tomorrow = new Date(today);
-tomorrow.setDate(today.getDate() + 1);
-const isFriday = today.getDay() === 5;
-
 export default function Home() {
+  // Computed fresh every render (not module scope) — this is an installed
+  // PWA people leave open for days, and a `new Date()` fixed at module-load
+  // time would keep showing yesterday's zmanim/Havdalah state forever past
+  // midnight until a hard refresh. The cost of recomputing is negligible.
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const isFriday = today.getDay() === 5;
+
   const {
     location,
     loading: locLoading,
     error: locError,
     detectGPS,
     searchLocation,
-    clearLocation,
   } = useSavedLocation();
   const { zmanim, loading: zmanimLoading } = useZmanim(location);
+  // Used by the Friday-only Havdalah card below AND by "Print Tomorrow's
+  // Zmanim" further down, which isn't Friday-only — fetch every day. (A
+  // prior pass gated this behind isFriday on the assumption it was only for
+  // Havdalah, which silently broke the print button the other six days.)
   const { zmanim: tomorrowZmanim } = useZmanim(location, tomorrow);
   const { prefs } = useDashboardPrefs();
   const [searchQuery, setSearchQuery] = useState("");
@@ -78,28 +85,22 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-amber-50 pb-24">
+    <div className="min-h-screen bg-background pb-24">
       <div className="max-w-lg mx-auto px-4 pt-4 pb-4">
-        {/* Header */}
-        <div className="flex items-center mb-6 min-h-[56px]">
-          <div className="shrink-0">
-            <NavMenu />
-          </div>
-          <div className="flex-1 text-center px-2">
-            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
-              Zmanim Today
-            </h1>
-            <p className="text-slate-500 text-sm">זמני היום</p>
-          </div>
-          <div className="shrink-0 flex items-center gap-2">
-            <ZmanimRemindersPanel zmanimData={zmanim} currentDate={today} />
-            <Link to="/Settings">
-              <button className="p-2 rounded-lg bg-white/90 shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors">
-                <Settings className="w-5 h-5 text-slate-700" />
-              </button>
-            </Link>
-          </div>
-        </div>
+        <PageHeader
+          title="Zmanim Today"
+          subtitle="זמני היום"
+          right={
+            <>
+              <ZmanimRemindersPanel zmanimData={zmanim} currentDate={today} />
+              <Link to="/Settings">
+                <button className={iconButtonClass}>
+                  <Settings className="w-5 h-5 text-foreground" />
+                </button>
+              </Link>
+            </>
+          }
+        />
 
         {/* Location */}
         {location ? (
@@ -211,7 +212,7 @@ export default function Home() {
 
             {/* Zmanim loading */}
             {zmanimLoading && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 flex items-center gap-3">
+              <div className="bg-card rounded-xl border border-border shadow-sm p-6 flex items-center gap-3">
                 <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
                 <p className="text-sm text-slate-500">
                   Calculating prayer times…
@@ -228,7 +229,7 @@ export default function Home() {
             {isFriday &&
               (tomorrowZmanim?.zmanim?.havdalah ||
                 tomorrowZmanim?.zmanim?.tzait_hakochavim) && (
-                <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between">
+                <div className="bg-card rounded-xl border border-border shadow-sm px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="text-base">🕍</span>
                     <div>
@@ -269,9 +270,9 @@ export default function Home() {
                       locationLabel,
                     })
                   }
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-card border border-border rounded-xl text-sm font-medium text-foreground hover:bg-accent active:scale-[0.98] transition-all"
                 >
-                  <Printer className="w-4 h-4 text-slate-500" />
+                  <Printer className="w-4 h-4 text-muted-foreground" />
                   Print Today's Zmanim
                 </button>
                 {tomorrowZmanim && (
@@ -283,9 +284,9 @@ export default function Home() {
                         locationLabel,
                       })
                     }
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-card border border-border rounded-xl text-sm font-medium text-foreground hover:bg-accent active:scale-[0.98] transition-all"
                   >
-                    <Printer className="w-4 h-4 text-slate-500" />
+                    <Printer className="w-4 h-4 text-muted-foreground" />
                     Print Tomorrow's Zmanim
                   </button>
                 )}
