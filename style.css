@@ -1,1 +1,237 @@
-/* Zmanim Today custom styles */
+/* ==========================================================================
+   Zmanim Today — docs site custom styling
+   Grounded in the live app's real tokens: blue-600 primary (#2563EB),
+   Fraunces display / Inter body, and the amber (#F59E0B/#FBBF24) the app
+   itself uses for the "time is short" countdown state. That blue+amber pair
+   doubles as this site's one signature device: a thin "horizon" gradient
+   rule — night blue fading to dawn amber — used sparingly to mark the
+   transitions a sunrise-times app cares about (day → next section).
+   ========================================================================== */
+
+:root {
+  --zt-blue: #2563eb;
+  --zt-blue-dark: #1e40af;
+  --zt-amber: #f59e0b;
+  --zt-ink: #0f172a;
+  --zt-muted: #475569;
+  --zt-border: #e2e8f0;
+  --zt-surface: #f8fafc;
+  --zt-radius: 0.75rem;
+}
+
+.dark {
+  --zt-ink: #e2e8f0;
+  --zt-muted: #94a3b8;
+  --zt-border: #1e293b;
+  --zt-surface: #0f172a;
+}
+
+/* -------------------------------------------------------------------- */
+/* Signature element: the horizon rule                                   */
+/* -------------------------------------------------------------------- */
+
+.zt-horizon {
+  position: relative;
+  height: 2px;
+  margin: 2.5rem auto;
+  max-width: 220px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--zt-blue-dark), var(--zt-blue) 55%, var(--zt-amber));
+}
+
+.zt-horizon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--zt-amber);
+  box-shadow: 0 0 8px 1px color-mix(in srgb, var(--zt-amber) 70%, transparent);
+  transform: translateY(-50%);
+}
+
+/* -------------------------------------------------------------------- */
+/* Home hero                                                             */
+/* -------------------------------------------------------------------- */
+
+.zt-hero {
+  text-align: center;
+  padding: 3rem 1rem 0;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.zt-eyebrow {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--zt-blue);
+  margin: 0;
+}
+
+.zt-hero-title {
+  font-size: clamp(2.25rem, 5vw, 3.1rem);
+  line-height: 1.14;
+  font-weight: 600;
+  max-width: 640px;
+  margin: 0.85rem auto 1rem;
+  color: var(--zt-ink);
+}
+
+.zt-hero-sub {
+  font-size: 1.15rem;
+  max-width: 620px;
+  margin: 0 auto;
+  color: var(--zt-muted);
+}
+
+.zt-hero-ctas {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 2rem;
+}
+
+.zt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.6rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.zt-btn-primary {
+  background: var(--zt-blue);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
+}
+
+.zt-btn-primary:hover {
+  background: var(--zt-blue-dark);
+  box-shadow: 0 6px 16px -4px rgba(37, 99, 235, 0.45);
+  transform: translateY(-1px);
+}
+
+.zt-btn-secondary {
+  border: 1px solid color-mix(in srgb, var(--zt-blue) 45%, transparent);
+  color: var(--zt-blue-dark);
+  background: transparent;
+}
+
+.dark .zt-btn-secondary {
+  color: #93c5fd;
+  border-color: color-mix(in srgb, var(--zt-blue) 55%, transparent);
+}
+
+.zt-btn-secondary:hover {
+  background: color-mix(in srgb, var(--zt-blue) 8%, transparent);
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zt-btn {
+    transition: none;
+  }
+  .zt-btn:hover {
+    transform: none;
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Cards — restrained lift + amber-tinted hover glow, echoing the        */
+/* countdown card's own highlight behavior in the app                    */
+/* -------------------------------------------------------------------- */
+
+a.card,
+.card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+a.card:hover,
+.card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--zt-blue) 35%, var(--zt-border)) !important;
+  box-shadow: 0 10px 24px -12px rgba(37, 99, 235, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  a.card,
+  .card {
+    transition: none;
+  }
+  a.card:hover,
+  .card:hover {
+    transform: none;
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Code blocks                                                           */
+/* -------------------------------------------------------------------- */
+
+pre {
+  border-radius: var(--zt-radius) !important;
+  border: 1px solid var(--zt-border);
+}
+
+code {
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.875em;
+}
+
+:not(pre) > code {
+  border-radius: 0.35rem;
+  padding: 0.15em 0.4em;
+}
+
+/* -------------------------------------------------------------------- */
+/* Tables                                                                 */
+/* -------------------------------------------------------------------- */
+
+table {
+  border-radius: var(--zt-radius);
+  overflow: hidden;
+}
+
+table th {
+  background: color-mix(in srgb, var(--zt-blue) 6%, var(--zt-surface));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+table tbody tr:hover {
+  background: color-mix(in srgb, var(--zt-blue) 4%, transparent);
+}
+
+/* -------------------------------------------------------------------- */
+/* Misc reading polish                                                   */
+/* -------------------------------------------------------------------- */
+
+blockquote {
+  border-left: 3px solid var(--zt-amber);
+  font-style: normal;
+}
+
+hr {
+  border-color: var(--zt-border);
+}
+
+/* Accessible focus ring everywhere, including custom .zt-btn controls */
+a:focus-visible,
+button:focus-visible,
+.zt-btn:focus-visible {
+  outline: 2px solid var(--zt-blue);
+  outline-offset: 2px;
+  border-radius: 0.3rem;
+}

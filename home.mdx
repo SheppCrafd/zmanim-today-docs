@@ -1,31 +1,32 @@
 ---
 title: "Home"
 sidebarTitle: "Home"
+description: "Zmanim Today — your complete prayer toolkit. Accurate halachic zmanim, a live Jerusalem compass, and three complete digital siddurim."
 ---
 
-<div style={{ textAlign: "center", padding: "3rem 1rem 2rem", maxWidth: "720px", margin: "0 auto" }}>
-  <p style={{ fontSize: "0.9rem", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#3B82F6", margin: 0 }}>
-    Zmanim Today
-  </p>
+<div className="zt-hero">
+  <p className="zt-eyebrow">Zmanim Today</p>
 
-  <h1 style={{ fontSize: "3rem", lineHeight: 1.15, fontWeight: 600, maxWidth: "640px", margin: "0.75rem auto 1rem" }}>
-    Prayer times measured by the sky above you.
+  <h1 className="zt-hero-title">
+    Your complete prayer toolkit.
   </h1>
 
-  <p style={{ fontSize: "1.15rem", maxWidth: "640px", margin: "0 auto 2rem", opacity: 0.8 }}>
+  <p className="zt-hero-sub">
     Accurate halachic zmanim, a live compass to Jerusalem, and three complete digital siddurim — the moment you sign in. Free account, no app store.
   </p>
 
-  <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center", flexWrap: "wrap" }}>
-    <a href="https://zmanim-today-1f2656a3.base44.app/" style={{ display: "inline-block", padding: "0.75rem 1.5rem", background: "#2563EB", color: "white", borderRadius: "0.5rem", fontWeight: 600, textDecoration: "none" }}>
+  <div className="zt-hero-ctas">
+    <a href="https://zmanim-today-1f2656a3.base44.app/" className="zt-btn zt-btn-primary">
       Open the app
     </a>
 
-    <a href="/installation" style={{ display: "inline-block", padding: "0.75rem 1.5rem", border: "1px solid #3B82F6", color: "#1E40AF", borderRadius: "0.5rem", fontWeight: 600, textDecoration: "none" }}>
+    <a href="/installation" className="zt-btn zt-btn-secondary">
       Install to your device
     </a>
   </div>
 </div>
+
+<div className="zt-horizon" />
 
 ## Everything you need for daily prayer
 
@@ -51,7 +52,7 @@ sidebarTitle: "Home"
   </Card>
 
   <Card title="Install on Any Device" href="/installation">
-    Use Zmanim Today on  iOS, Android, or desktop.
+    Use Zmanim Today on iOS, Android, or desktop.
   </Card>
 </CardGroup>
 
@@ -72,6 +73,8 @@ sidebarTitle: "Home"
 <Tip>
   Zmanim, compass math, and siddur text all run in your browser using public APIs (Hebcal, Sefaria, Open-Meteo). Preferences live in `localStorage`. The only server component is push notifications — if you enable reminders, your Web Push subscription (endpoint \+ location \+ toggles) is stored on the [base44](https://base44.com) backend so notifications can be delivered even when the app is closed.
 </Tip>
+
+<div className="zt-horizon" />
 
 ## Dig deeper
 
