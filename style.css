@@ -28,18 +28,26 @@
 
 /* -------------------------------------------------------------------- */
 /* Signature element: the horizon rule                                   */
+/* Every "---" markdown divider across the site compiles to a plain      */
+/* <hr>, so styling it directly here is what makes the signature rule    */
+/* consistent everywhere (not just the two spots on Home that opt into   */
+/* it explicitly) without having to touch every content page.            */
 /* -------------------------------------------------------------------- */
 
-.zt-horizon {
+.zt-horizon,
+hr {
   position: relative;
+  display: block;
   height: 2px;
-  margin: 2.5rem auto;
-  max-width: 220px;
+  width: 100%;
+  margin: 2.5rem 0;
+  border: none;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--zt-blue-dark), var(--zt-blue) 55%, var(--zt-amber));
 }
 
-.zt-horizon::after {
+.zt-horizon::after,
+hr::after {
   content: "";
   position: absolute;
   top: 50%;
