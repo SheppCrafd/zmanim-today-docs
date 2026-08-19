@@ -44,14 +44,24 @@
               "settings/dashboard",
               "settings/preferences"
             ]
-          },
+          }
+        ]
+      },
+      {
+        "tab": "Help",
+        "groups": [
           {
             "group": "Help",
             "pages": [
               "help/faq",
               "help/troubleshooting"
             ]
-          },
+          }
+        ]
+      },
+      {
+        "tab": "Technical",
+        "groups": [
           {
             "group": "Technical Reference",
             "pages": [
@@ -72,8 +82,21 @@
   "navbar": {
     "links": [
       {
-        "href": "https://zmanim-today-1f2656a3.base44.app/",
+        "href": "https://zmanimtoday.base44.app/",
         "label": "Try the app now!"
+      }
+    ]
+  },
+  "footer": {
+    "links": [
+      {
+        "header": "Legal",
+        "items": [
+          {
+            "label": "© 2026 Zmanim Today. All rights reserved.",
+            "href": "https://zmanimtoday.base44.app/Privacy"
+          }
+        ]
       }
     ]
   },
